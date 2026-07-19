@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
@@ -47,7 +48,7 @@ async function sbSignUp({ url, anonKey, email, password }) {
     body: JSON.stringify({ email, password }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.msg || data.error_description || "Sign up failed");
+  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || data.error || JSON.stringify(data));
   return data;
 }
 
@@ -58,7 +59,7 @@ async function sbSignIn({ url, anonKey, email, password }) {
     body: JSON.stringify({ email, password }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.msg || data.error_description || "Sign in failed");
+  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || data.error || JSON.stringify(data));
   return data;
 }
 
