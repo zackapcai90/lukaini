@@ -1,12 +1,12 @@
-
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Plus, ArrowLeft, X, Camera, AlertTriangle, LogOut,
   Clock, Wallet, ChevronRight, Activity, Phone,
-  MapPin, Calendar as CalIcon, Footprints, Link2, Loader2
+  MapPin, Calendar as CalIcon, Footprints, Link2, Loader2, Inbox, Check
 } from "lucide-react";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../lib/supabaseConfig";
 
 const theme = {
   paper: "#F6F4EF", ink: "#16261F", inkSoft: "#3F4F49",
@@ -183,37 +183,7 @@ function ModalActions({ onClose, onSave, disabled, saveLabel, saving }) {
 
 // ---------- Connect + Auth screens ----------
 
-function ConnectScreen({ onConnect }) {
-  const [url, setUrl] = useState("");
-  const [anonKey, setAnonKey] = useState("");
-  return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: theme.paper }}>
-      <div className="w-full max-w-md rounded-xl p-7" style={{ backgroundColor: theme.white, border: `1px solid ${theme.linenDark}` }}>
-        <Link2 size={20} style={{ color: theme.pine }} />
-        <div className="text-xl mt-3 mb-1" style={{ fontFamily: "'Fraunces', serif", color: theme.ink }}>Connect Supabase</div>
-        <div className="text-xs mb-5" style={{ color: theme.inkSoft, fontFamily: "Inter, sans-serif" }}>
-          From Settings → API in your Supabase project. Stored only in this session's memory, never saved.
-        </div>
-        <Field label="Project URL">
-          <input className={inputClass} style={inputStyle} placeholder="https://xxxx.supabase.co" value={url} onChange={(e) => setUrl(e.target.value)} />
-        </Field>
-        <Field label="Anon public key">
-          <input className={inputClass} style={inputStyle} placeholder="eyJhbGciOi..." value={anonKey} onChange={(e) => setAnonKey(e.target.value)} />
-        </Field>
-        <button
-          disabled={!url || !anonKey}
-          onClick={() => onConnect({ url: url.replace(/\/$/, ""), anonKey })}
-          className="w-full mt-2 px-4 py-2.5 rounded-md text-sm"
-          style={{ backgroundColor: (!url || !anonKey) ? theme.linenDark : theme.pine, color: theme.white, fontFamily: "Inter, sans-serif" }}
-        >
-          Continue
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function AuthScreen({ config, onSignedIn, onDisconnect }) {
+function AuthScreen({ config, onSignedIn }) {
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -269,9 +239,6 @@ function AuthScreen({ config, onSignedIn, onDisconnect }) {
         <button onClick={() => setMode(mode === "signin" ? "signup" : "signin")} className="w-full mt-3 text-xs" style={{ color: theme.inkSoft, fontFamily: "Inter, sans-serif" }}>
           {mode === "signin" ? "No account yet? Sign up" : "Already have an account? Sign in"}
         </button>
-        <button onClick={onDisconnect} className="w-full mt-4 text-xs" style={{ color: theme.moss, fontFamily: "Inter, sans-serif" }}>
-          Use a different Supabase project
-        </button>
       </div>
     </div>
   );
@@ -279,9 +246,10 @@ function AuthScreen({ config, onSignedIn, onDisconnect }) {
 
 // ---------- Sidebar / Dashboard / Patients (mostly as before) ----------
 
-function Sidebar({ view, setView, patientCount, email, onSignOut }) {
+function Sidebar({ view, setView, patientCount, email, onSignOut, pendingCount }) {
   const items = [
     { key: "dashboard", label: "Dashboard", icon: Activity },
+    { key: "requests", label: "Requests", icon: Inbox, badge: pendingCount },
     { key: "patients", label: "Patients", icon: Footprints },
   ];
   return (
@@ -291,11 +259,14 @@ function Sidebar({ view, setView, patientCount, email, onSignOut }) {
         <div className="text-xl mt-0.5" style={{ color: theme.white, fontFamily: "'Fraunces', serif" }}>Wound Care</div>
       </div>
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {items.map(({ key, label, icon: Icon }) => (
+        {items.map(({ key, label, icon: Icon, badge }) => (
           <button key={key} onClick={() => setView(key)}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors"
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-md text-sm transition-colors"
             style={{ fontFamily: "Inter, sans-serif", backgroundColor: view === key ? theme.pine : "transparent", color: view === key ? theme.white : theme.moss }}>
-            <Icon size={16} />{label}
+            <span className="flex items-center gap-3"><Icon size={16} />{label}</span>
+            {!!badge && (
+              <span className="text-xs px-1.5 rounded-full" style={{ backgroundColor: theme.amber, color: theme.white, fontFamily: "'IBM Plex Mono', monospace" }}>{badge}</span>
+            )}
           </button>
         ))}
       </nav>
@@ -471,8 +442,8 @@ function PatientDetail({ patient, onBack, onAddWound, onLogVisit }) {
 
 // ---------- Modals that call Supabase ----------
 
-function AddPatientModal({ onClose, onSave, saving }) {
-  const [form, setForm] = useState({ name: "", ic: "", dob: "", phone: "", address: "", t2dmSince: "" });
+function AddPatientModal({ onClose, onSave, saving, initial }) {
+  const [form, setForm] = useState({ name: initial?.full_name || "", ic: "", dob: "", phone: initial?.phone || "", address: initial?.address || "", t2dmSince: "" });
   return (
     <Modal onClose={onClose} title="New patient">
       <Field label="Full name"><input className={inputClass} style={inputStyle} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
@@ -584,40 +555,104 @@ function LogVisitModal({ onClose, onSave, saving }) {
   );
 }
 
+function RequestsView({ requests, onAccept, onDecline, busyId }) {
+  const pending = requests.filter((r) => r.status === "pending");
+  return (
+    <div className="p-8 max-w-4xl">
+      <h1 className="text-2xl mb-6" style={{ fontFamily: "'Fraunces', serif", color: theme.ink }}>Booking requests</h1>
+      {pending.length === 0 ? (
+        <div className="text-sm rounded-lg px-4 py-8 text-center" style={{ backgroundColor: theme.white, border: `1px solid ${theme.linenDark}`, color: theme.inkSoft, fontFamily: "Inter, sans-serif" }}>
+          No pending requests. Share your booking link with patients: <br />
+          <code style={{ fontFamily: "'IBM Plex Mono', monospace" }}>yourapp.vercel.app/book</code>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {pending.map((r) => (
+            <div key={r.id} className="rounded-lg p-4" style={{ backgroundColor: theme.white, border: `1px solid ${theme.linenDark}` }}>
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-sm" style={{ fontFamily: "Inter, sans-serif", color: theme.ink, fontWeight: 500 }}>{r.full_name}</div>
+                  <div className="text-xs mt-0.5" style={{ color: theme.inkSoft, fontFamily: "Inter, sans-serif" }}>
+                    {r.phone} &middot; {r.address}
+                  </div>
+                  {r.wound_description && (
+                    <div className="text-xs mt-2" style={{ color: theme.ink, fontFamily: "Inter, sans-serif" }}>"{r.wound_description}"</div>
+                  )}
+                  {(r.preferred_date || r.preferred_time) && (
+                    <div className="text-xs mt-2" style={{ color: theme.pine, fontFamily: "'IBM Plex Mono', monospace" }}>
+                      Preferred: {r.preferred_date || "—"} {r.preferred_time || ""}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button disabled={busyId === r.id} onClick={() => onDecline(r.id)}
+                    className="px-3 py-1.5 rounded-md text-xs" style={{ backgroundColor: theme.linen, color: theme.inkSoft, fontFamily: "Inter, sans-serif" }}>
+                    Decline
+                  </button>
+                  <button disabled={busyId === r.id} onClick={() => onAccept(r)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs" style={{ backgroundColor: theme.pine, color: theme.white, fontFamily: "Inter, sans-serif" }}>
+                    <Check size={12} /> Accept
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Main App ----------
 
 export default function App() {
-  const [config, setConfig] = useState(null);       // { url, anonKey }
+  const config = { url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY };
   const [session, setSession] = useState(null);      // { accessToken, userId, email }
   const [patients, setPatients] = useState([]);
+  const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [view, setView] = useState("dashboard");
   const [selectedPatientId, setSelectedPatientId] = useState(null);
   const [modal, setModal] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [busyRequestId, setBusyRequestId] = useState(null);
 
   const selectedPatient = useMemo(() => patients.find((p) => p.id === selectedPatientId), [patients, selectedPatientId]);
+  const pendingCount = useMemo(() => requests.filter((r) => r.status === "pending").length, [requests]);
 
   const loadPatients = useCallback(async () => {
-    if (!config || !session) return;
+    if (!session) return;
     setLoading(true); setLoadError("");
     try {
-      const rows = await sbRequest({
-        ...config, token: session.accessToken,
-        path: "/rest/v1/patients?select=*,wound_profiles(*,visits(*,invoices(*)))&order=created_at.desc",
-      });
-      setPatients(rows.map(dbToPatient));
+      const [patientRows, requestRows] = await Promise.all([
+        sbRequest({ ...config, token: session.accessToken, path: "/rest/v1/patients?select=*,wound_profiles(*,visits(*,invoices(*)))&order=created_at.desc" }),
+        sbRequest({ ...config, token: session.accessToken, path: "/rest/v1/booking_requests?order=created_at.desc" }),
+      ]);
+      setPatients(patientRows.map(dbToPatient));
+      setRequests(requestRows);
     } catch (e) {
       setLoadError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [config, session]);
+  }, [session]);
 
   useEffect(() => { loadPatients(); }, [loadPatients]);
 
-  const addPatient = async (form) => {
+  const acceptRequest = async (request) => {
+    setModal({ addPatientFrom: request });
+  };
+
+  const declineRequest = async (requestId) => {
+    setBusyRequestId(requestId);
+    try {
+      await sbRequest({ ...config, token: session.accessToken, method: "PATCH", path: `/rest/v1/booking_requests?id=eq.${requestId}`, body: { status: "declined" } });
+      setRequests((rs) => rs.map((r) => r.id === requestId ? { ...r, status: "declined" } : r));
+    } catch (e) { setLoadError(e.message); } finally { setBusyRequestId(null); }
+  };
+
+  const addPatient = async (form, sourceRequestId) => {
     setSaving(true);
     try {
       const [row] = await sbRequest({
@@ -625,6 +660,10 @@ export default function App() {
         body: { full_name: form.name, ic_number: form.ic, dob: form.dob || null, phone: form.phone, address: form.address, t2dm_since: form.t2dmSince, comorbidities: [] },
       });
       setPatients((ps) => [dbToPatient({ ...row, wound_profiles: [] }), ...ps]);
+      if (sourceRequestId) {
+        await sbRequest({ ...config, token: session.accessToken, method: "PATCH", path: `/rest/v1/booking_requests?id=eq.${sourceRequestId}`, body: { status: "confirmed" } });
+        setRequests((rs) => rs.map((r) => r.id === sourceRequestId ? { ...r, status: "confirmed" } : r));
+      }
       setModal(null);
     } catch (e) { setLoadError(e.message); } finally { setSaving(false); }
   };
@@ -670,13 +709,21 @@ export default function App() {
     } catch (e) { setLoadError(e.message); } finally { setSaving(false); }
   };
 
-  if (!config) return <ConnectScreen onConnect={setConfig} />;
-  if (!session) return <AuthScreen config={config} onSignedIn={setSession} onDisconnect={() => setConfig(null)} />;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ backgroundColor: theme.paper }}>
+        <div className="max-w-md text-sm" style={{ color: theme.inkSoft, fontFamily: "Inter, sans-serif" }}>
+          Missing Supabase configuration. Set <code>NEXT_PUBLIC_SUPABASE_URL</code> and <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in your Vercel project's Environment Variables, then redeploy.
+        </div>
+      </div>
+    );
+  }
+  if (!session) return <AuthScreen config={config} onSignedIn={setSession} onDisconnect={() => {}} />;
 
   return (
     <div className="flex h-full w-full" style={{ backgroundColor: theme.paper, minHeight: "100vh" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');`}</style>
-      <Sidebar view={view} setView={(v) => { setView(v); setSelectedPatientId(null); }} patientCount={patients.length} email={session.email} onSignOut={() => setSession(null)} />
+      <Sidebar view={view} setView={(v) => { setView(v); setSelectedPatientId(null); }} patientCount={patients.length} email={session.email} onSignOut={() => setSession(null)} pendingCount={pendingCount} />
       <div className="flex-1 overflow-y-auto">
         {loadError && (
           <div className="m-6 px-4 py-3 rounded-md text-sm" style={{ backgroundColor: "#F0DAD5", color: theme.rose, fontFamily: "Inter, sans-serif" }}>
@@ -685,11 +732,12 @@ export default function App() {
         )}
         {loading && patients.length === 0 ? (
           <div className="p-8 flex items-center gap-2 text-sm" style={{ color: theme.inkSoft, fontFamily: "Inter, sans-serif" }}>
-            <Loader2 size={14} className="animate-spin" /> Loading your patients…
+            <Loader2 size={14} className="animate-spin" /> Loading your data…
           </div>
         ) : (
           <>
             {view === "dashboard" && <Dashboard patients={patients} />}
+            {view === "requests" && <RequestsView requests={requests} onAccept={acceptRequest} onDecline={declineRequest} busyId={busyRequestId} />}
             {view === "patients" && !selectedPatient && <PatientList patients={patients} onSelect={setSelectedPatientId} onAdd={() => setModal("addPatient")} />}
             {view === "patients" && selectedPatient && (
               <PatientDetail patient={selectedPatient} onBack={() => setSelectedPatientId(null)} onAddWound={() => setModal("addWound")} onLogVisit={(id) => setModal({ logVisit: id })} />
@@ -697,7 +745,11 @@ export default function App() {
           </>
         )}
       </div>
-      {modal === "addPatient" && <AddPatientModal onClose={() => setModal(null)} onSave={addPatient} saving={saving} />}
+      {modal === "addPatient" && <AddPatientModal onClose={() => setModal(null)} onSave={(form) => addPatient(form)} saving={saving} />}
+      {modal?.addPatientFrom && (
+        <AddPatientModal onClose={() => setModal(null)} initial={modal.addPatientFrom} saving={saving}
+          onSave={(form) => addPatient(form, modal.addPatientFrom.id)} />
+      )}
       {modal === "addWound" && <AddWoundModal onClose={() => setModal(null)} onSave={addWound} saving={saving} />}
       {modal?.logVisit && <LogVisitModal onClose={() => setModal(null)} onSave={(form) => logVisit(modal.logVisit, form)} saving={saving} />}
     </div>
