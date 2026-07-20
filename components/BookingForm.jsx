@@ -36,7 +36,7 @@ export default function BookingForm() {
           apikey: SUPABASE_ANON_KEY,
           Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
           "Content-Type": "application/json",
-          Prefer: "return=representation",
+          Prefer: "return=minimal",
         },
         body: JSON.stringify(form),
       });
@@ -112,3 +112,4 @@ export default function BookingForm() {
     </div>
   );
 }
+
